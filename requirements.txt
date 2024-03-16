@@ -1,5 +1,0 @@
-langchain==0.0.227
-streamlit
-openai
-bs4
-yfinance
