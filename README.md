@@ -1,4 +1,4 @@
-## AB-05 - Problem Statement
+# AB-05 - Problem Statement
 ## StockSavvy - Stock Analysis Bot 
 
 This repository contains code for a Stock Analysis Bot built using Streamlit and Python. The bot provides users with investment-related insights, fetches financial news, and generates reports based on user queries.
