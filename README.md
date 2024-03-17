@@ -17,12 +17,14 @@ This repository contains code for a Stock Analysis Bot built using Streamlit and
 ## How to Use:
 1. Clone this repository to your local machine.
 2. Install dependencies using `pip install -r requirements.txt`.
-3. Set up environment variables for API keys:
+3. Rename .env.example to .env and fill in your API keys appropriately in the .env file.
+4. Set up environment variables for API keys:
    - `NEWS_API`: News API key.
    - `OPEN_AI_KEY`: OpenAI API key.
-4. Run the application using `streamlit run app.py`.
-5. Enter your name, investment queries, and risk parameters.
-6. Click on buttons to fetch news, clear inputs, or generate reports.
+5. Run the application using `streamlit run app.py`.
+6. Enter your name, investment queries, and risk parameters.
+7. Click on buttons to fetch news, clear inputs, or generate reports.
+8. Download PDF reports with analysis results.
 
 ## Directory Structure:
 - `app.py`: Main script for the Streamlit web application.
@@ -35,6 +37,8 @@ This repository contains code for a Stock Analysis Bot built using Streamlit and
 - News API: [newsapi.org](https://newsapi.org/)
 - OpenAI: [openai.com](https://openai.com/)
 - Yahoo Finance: [finance.yahoo.com](https://finance.yahoo.com/)
+
+# Thank you for using StockSavvy!
 
 ## License:
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
