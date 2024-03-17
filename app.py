@@ -77,7 +77,7 @@ def get_realtime_stock_data(symbol, stock_keys):
         
 
 # Page title and description
-st.title("📈 Stock Analysis Bot")
+st.title("📈 StockSavvy - Stock Analysis Bot")
 
 # Input field for user's name
 name = st.text_input("May I know your name ?")
