@@ -14,12 +14,12 @@ import os
 warnings.filterwarnings("ignore")
 # Load variables from .env file
 
-load_dotenv("E:/project/AlphaByte-1.0-Hackathon/.env")
+load_dotenv("E:/hackthon/.env")
 # Access variables
 os.environ["OPENAI_API_KEY"]= os.getenv("OPEN_AI_KEY")
 
 llm=OpenAI(temperature=0,
-           model_name="gpt-3.5-turbo-16k-0613")
+           model_name="gpt-3.5-turbo")
 
 
 def get_stock_price(ticker,history=5):
@@ -32,8 +32,11 @@ def get_stock_price(ticker,history=5):
     df.index=[str(x).split()[0] for x in list(df.index)]
     df.index.rename("Date",inplace=True)
     df=df[-history:]
+    # print(df.columns)
+    
     return df.to_string()
 
+# Script to scrap top5 googgle news for given company name
 def google_query(search_term):
     if "news" not in search_term:
         search_term=search_term+" stock news"
@@ -42,7 +45,9 @@ def google_query(search_term):
     return url
 
 def get_recent_stock_news(company_name):
+    # time.sleep(4) #To avoid rate limit error
     headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36'}
+
     g_query=google_query(company_name)
     res=requests.get(g_query,headers=headers).text
     soup=BeautifulSoup(res,"html.parser")
@@ -51,6 +56,7 @@ def get_recent_stock_news(company_name):
         news.append(n.text)
     for n in soup.find_all("div","IJl0Z"):
         news.append(n.text)
+
     if len(news)>6:
         news=news[:4]
     else:
@@ -63,7 +69,9 @@ def get_recent_stock_news(company_name):
     return top5_news
 
 
+# Fetch financial statements from Yahoo Finance
 def get_financial_statements(ticker):
+    # time.sleep(4) #To avoid rate limit error
     if "." in ticker:
         ticker=ticker.split(".")[0]
     else:
@@ -78,6 +86,7 @@ def get_financial_statements(ticker):
     return balance_sheet
 
 
+#Openai function calling
 function=[
         {
         "name": "get_company_Stock_ticker",
@@ -104,10 +113,10 @@ function=[
 def get_stock_ticker(query):
     response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
-            temperature=0.5,
+            temperature=0 ,
             messages=[{
                 "role":"user",
-                "content":f"Given the user request, what is the comapany name and the company stock ticker ?: {query}?"
+                "content":f"Given the user request, what is the company name and the company stock ticker ?: {query}?"
             }],
             functions=function,
             function_call={"name": "get_company_Stock_ticker"},
@@ -119,6 +128,7 @@ def get_stock_ticker(query):
     return company_name,company_ticker
 
 def Analyze_stock(query, risk, name):
+    #agent.run(query) Outputs Company name, Ticker
     Company_name,ticker=get_stock_ticker(query)
     print({"Query":query,"Company_name":Company_name,"Ticker":ticker})
     stock_data=get_stock_price(ticker,history=10)
@@ -126,11 +136,15 @@ def Analyze_stock(query, risk, name):
     stock_news=get_recent_stock_news(Company_name)
 
     available_information=f"Stock Price: {stock_data}\n\nStock Financials: {stock_financials}\n\nStock News: {stock_news}"
-    analysis=llm(f"Give detail stock analysis, Use the available data and provide investment recommendation. User's Name is {name} \
+    #available_information=f"Stock Financials: {stock_financials}\n\nStock News: {stock_news}"
+
+    # print("\n\nAnalyzing.....\n")
+    analysis=llm(f"Give detail stock analysis, Use the available data and provide investment recommendation. At the start itself give conclusion to user about the stock User's Name is {name} \
              The user is fully aware about the investment risk, dont include any kind of warning like 'It is recommended to conduct further research and analysis or consult with a financial advisor before making an investment decision' in the answer The user is interested in investments having risk tolerance : {risk} \
              User question: {query} \
-             You have the following information available about {Company_name}. Write (5-8) pointwise investment analysis to answer user query, At the end conclude with proper explaination.Try to Give positives and negatives  : If company doesn't exist then include warning 'Sorry there is no information available.' \
+             You have the following information available about {Company_name}. Write (5-8) pointwise investment analysis to answer user query, At the start itself give recommendation to user about the stock.' \
               {available_information} "
              )
+    # print(analysis)
 
-    return analysis
+    return analysis 

@@ -3,7 +3,10 @@ import yfinance as yf
 import pandas as pd
 import datetime
 import time
-
+import os
+from langchain.llms import OpenAI
+from langchain.agents import load_tools, AgentType, Tool, initialize_agent
+import openai
 def get_realtime_prices(stocks):
     prices = {}
     for stock_symbol in stocks:
@@ -37,16 +40,19 @@ def get_recommendation(investment_amount, stocks, risk_factor):
     return recommendations
 
 st.title("Stock Recommendation App")
+os.environ["OPENAI_API_KEY"]= os.getenv("OPEN_AI_KEY")
 
+llm=OpenAI(temperature=0,
+           model_name="gpt-3.5-turbo") 
+          
 investment_amount = st.number_input("Enter the amount you want to invest:", min_value=1, step=1)
-stock_symbols = st.text_input("Enter comma-separated list of stock symbols (e.g., AAPL, MSFT, GOOGL):")
+stock_symbols = st.text_input("Enter comma-separated list of stock symbols (e.g., RELIANCE.NS,TCS.NS):")
 risk_factor = st.selectbox("Choose the risk factor:", ["Low", "Medium", "High"])
 
 if st.button("Get Recommendations"):
     stocks = [symbol.strip() for symbol in stock_symbols.split(",")]
     recommendations = get_recommendation(investment_amount, stocks, risk_factor)
-    
-    st.write("Recommendations:")
+    st.write("\nREAL TIME DATA\n")
     for stock_symbol, data in recommendations.items():
         st.write(f"{stock_symbol}: {data['Recommendation']}")
 
@@ -54,3 +60,8 @@ if st.button("Get Recommendations"):
     realtime_prices = get_realtime_prices(stocks)
     for stock_symbol, price in realtime_prices.items():
         st.write(f"{stock_symbol}: {price}")
+    analysis=llm(f"Give detail stock analysis, Use the available data and provide investment recommendation. You have the following information available about the stocks {recommendations}. Don't show price of any stock. User has selected {risk_factor}. Write (5-6) lines investment analysis to answer user query, At the start itself give recommendation to user about the stock.")
+    st.write("\nCONCLUSION\n") 
+    st.write(analysis)
+     
+
