@@ -4,7 +4,6 @@ import pandas as pd
 import datetime
 import time
 
-# Function to get real-time stock prices
 def get_realtime_prices(stocks):
     prices = {}
     for stock_symbol in stocks:
@@ -13,40 +12,39 @@ def get_realtime_prices(stocks):
         prices[stock_symbol] = current_price
     return prices
 
-# Function to get stock recommendations
-def get_recommendation(investment_amount, stocks):
+def get_recommendation(investment_amount, stocks, risk_factor):
     recommendations = {}
     end_date = datetime.datetime.now().strftime("%Y-%m-%d")
     
     for stock_symbol in stocks:
-        # Retrieve stock data
         stock_data = yf.download(stock_symbol, start="2020-01-01", end=end_date)
-        
-        # Calculate some basic metrics
         stock_data['Daily_Return'] = stock_data['Adj Close'].pct_change()
         avg_daily_return = stock_data['Daily_Return'].mean()
         std_dev_daily_return = stock_data['Daily_Return'].std()
         
-        # Simulate recommendation algorithm
-        if avg_daily_return > 0 and std_dev_daily_return < 0.05:
+        if risk_factor == "Low":
+            risk_threshold = 0.05
+        elif risk_factor == "Medium":
+            risk_threshold = 0.15
+        elif risk_factor == "High":
+            risk_threshold = 0.25
+        
+        if avg_daily_return > 0 and std_dev_daily_return < risk_threshold:
             recommendations[stock_symbol] = {"Recommendation": "Buy", "Current_Price": stock_data['Adj Close'].iloc[-1]}
         else:
             recommendations[stock_symbol] = {"Recommendation": "Hold", "Current_Price": stock_data['Adj Close'].iloc[-1]}
     
     return recommendations
 
-# Streamlit UI
 st.title("Stock Recommendation App")
 
-# User input for investment amount
 investment_amount = st.number_input("Enter the amount you want to invest:", min_value=1, step=1)
-
-# User input for stock symbols
 stock_symbols = st.text_input("Enter comma-separated list of stock symbols (e.g., AAPL, MSFT, GOOGL):")
+risk_factor = st.selectbox("Choose the risk factor:", ["Low", "Medium", "High"])
 
 if st.button("Get Recommendations"):
     stocks = [symbol.strip() for symbol in stock_symbols.split(",")]
-    recommendations = get_recommendation(investment_amount, stocks)
+    recommendations = get_recommendation(investment_amount, stocks, risk_factor)
     
     st.write("Recommendations:")
     for stock_symbol, data in recommendations.items():
