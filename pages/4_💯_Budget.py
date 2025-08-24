@@ -40,9 +40,16 @@ class HuggingFaceLlamaLLM:
 def get_realtime_prices(stocks):
     prices = {}
     for stock_symbol in stocks:
-        stock = yf.Ticker(stock_symbol)
-        current_price = stock.history(period="1d")['Close'].iloc[-1]
-        prices[stock_symbol] = current_price
+        try:
+            stock = yf.Ticker(stock_symbol)
+            hist = stock.history(period="1d")
+            if not hist.empty:
+                current_price = hist['Close'].iloc[-1]
+                prices[stock_symbol] = current_price
+            else:
+                prices[stock_symbol] = "No data"
+        except Exception as e:
+            prices[stock_symbol] = f"Error: {str(e)}"
     return prices
 
 def get_recommendation(investment_amount, stocks, risk_factor):
@@ -50,22 +57,54 @@ def get_recommendation(investment_amount, stocks, risk_factor):
     end_date = datetime.datetime.now().strftime("%Y-%m-%d")
     
     for stock_symbol in stocks:
-        stock_data = yf.download(stock_symbol, start="2020-01-01", end=end_date)
-        stock_data['Daily_Return'] = stock_data['Adj Close'].pct_change()
-        avg_daily_return = stock_data['Daily_Return'].mean()
-        std_dev_daily_return = stock_data['Daily_Return'].std()
-        
-        if risk_factor == "Low":
-            risk_threshold = 0.05
-        elif risk_factor == "Medium":
-            risk_threshold = 0.15
-        elif risk_factor == "High":
-            risk_threshold = 0.25
-        
-        if avg_daily_return > 0 and std_dev_daily_return < risk_threshold:
-            recommendations[stock_symbol] = {"Recommendation": "Buy", "Current_Price": stock_data['Adj Close'].iloc[-1]}
-        else:
-            recommendations[stock_symbol] = {"Recommendation": "Hold", "Current_Price": stock_data['Adj Close'].iloc[-1]}
+        try:
+            # Download stock data
+            stock_data = yf.download(stock_symbol, start="2020-01-01", end=end_date, progress=False)
+            
+            # Check if data was downloaded successfully
+            if stock_data.empty:
+                st.warning(f"No data found for {stock_symbol}. Please check the symbol.")
+                recommendations[stock_symbol] = {"Recommendation": "No Data", "Current_Price": "N/A"}
+                continue
+            
+            # Handle MultiIndex columns
+            if isinstance(stock_data.columns, pd.MultiIndex):
+                # Flatten the MultiIndex by taking the first level (the actual column names)
+                stock_data.columns = stock_data.columns.droplevel(1)
+            
+            # Check available columns and use Close instead of Adj Close
+            if 'Close' in stock_data.columns:
+                stock_data['Daily_Return'] = stock_data['Close'].pct_change()
+                current_price = stock_data['Close'].iloc[-1]
+            elif 'Adj Close' in stock_data.columns:
+                stock_data['Daily_Return'] = stock_data['Adj Close'].pct_change()
+                current_price = stock_data['Adj Close'].iloc[-1]
+            else:
+                st.error(f"No suitable price column found for {stock_symbol}")
+                recommendations[stock_symbol] = {"Recommendation": "Data Error", "Current_Price": "N/A"}
+                continue
+            
+            # Calculate metrics
+            avg_daily_return = stock_data['Daily_Return'].mean()
+            std_dev_daily_return = stock_data['Daily_Return'].std()
+            
+            # Set risk thresholds
+            if risk_factor == "Low":
+                risk_threshold = 0.05
+            elif risk_factor == "Medium":
+                risk_threshold = 0.15
+            elif risk_factor == "High":
+                risk_threshold = 0.25
+            
+            # Make recommendation
+            if avg_daily_return > 0 and std_dev_daily_return < risk_threshold:
+                recommendations[stock_symbol] = {"Recommendation": "Buy", "Current_Price": current_price}
+            else:
+                recommendations[stock_symbol] = {"Recommendation": "Hold", "Current_Price": current_price}
+                
+        except Exception as e:
+            st.error(f"Error processing {stock_symbol}: {str(e)}")
+            recommendations[stock_symbol] = {"Recommendation": "Error", "Current_Price": "N/A"}
     
     return recommendations
 
@@ -80,19 +119,29 @@ stock_symbols = st.text_input("Enter comma-separated list of stock symbols (e.g.
 risk_factor = st.selectbox("Choose the risk factor:", ["Low", "Medium", "High"])
 
 if st.button("Get Recommendations"):
-    stocks = [symbol.strip() for symbol in stock_symbols.split(",")]
-    recommendations = get_recommendation(investment_amount, stocks, risk_factor)
-    st.write("\nREAL TIME DATA\n")
-    for stock_symbol, data in recommendations.items():
-        st.write(f"{stock_symbol}: {data['Recommendation']}")
+    if not stock_symbols.strip():
+        st.error("Please enter at least one stock symbol.")
+    else:
+        stocks = [symbol.strip().upper() for symbol in stock_symbols.split(",")]
+        
+        with st.spinner("Fetching stock data and generating recommendations..."):
+            recommendations = get_recommendation(investment_amount, stocks, risk_factor)
+            
+            st.write("\n**REAL TIME DATA**\n")
+            for stock_symbol, data in recommendations.items():
+                st.write(f"**{stock_symbol}**: {data['Recommendation']}")
 
-    st.write("\nReal-time Prices:")
-    realtime_prices = get_realtime_prices(stocks)
-    for stock_symbol, price in realtime_prices.items():
-        st.write(f"{stock_symbol}: {price}")
-    
-    prompt = f"""Give detail stock analysis, Use the available data and provide investment recommendation. You have the following information available about the stocks {recommendations}. Don't show price of any stock. User has selected {risk_factor}. Write (5-6) lines investment analysis to answer user query, At the start itself give recommendation to user about the stock."""
-    
-    analysis = llm(prompt)
-    st.write("\nCONCLUSION\n") 
-    st.write(analysis)
+            st.write("\n**Real-time Prices:**")
+            realtime_prices = get_realtime_prices(stocks)
+            for stock_symbol, price in realtime_prices.items():
+                if isinstance(price, (int, float)):
+                    st.write(f"**{stock_symbol}**: ₹{price:.2f}")
+                else:
+                    st.write(f"**{stock_symbol}**: {price}")
+            
+            # Generate AI analysis
+            prompt = f"""Give detailed stock analysis. Use the available data and provide investment recommendation. You have the following information available about the stocks {recommendations}. Don't show price of any stock. User has selected {risk_factor} risk factor. Write (5-6) lines investment analysis to answer user query. At the start itself give recommendation to user about the stock."""
+            
+            analysis = llm(prompt)
+            st.write("\n**CONCLUSION**\n") 
+            st.write(analysis)
