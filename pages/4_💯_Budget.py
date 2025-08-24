@@ -4,9 +4,39 @@ import pandas as pd
 import datetime
 import time
 import os
-from langchain.llms import OpenAI
-from langchain.agents import load_tools, AgentType, Tool, initialize_agent
-import openai
+from huggingface_hub import InferenceClient
+
+class HuggingFaceLlamaLLM:
+    def __init__(self, api_key, model_name="meta-llama/Llama-3.1-8B-Instruct", max_tokens=1000, temperature=0):
+        self.client = InferenceClient(
+            provider="fireworks-ai",
+            api_key=api_key,
+        )
+        self.model_name = model_name
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+    
+    def __call__(self, prompt):
+        return self.generate(prompt)
+    
+    def generate(self, prompt):
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=self.max_tokens,
+                temperature=self.temperature
+            )
+            return completion.choices[0].message.content
+        except Exception as e:
+            st.error(f"Error calling Hugging Face API: {str(e)}")
+            return "Sorry, I encountered an error processing your request."
+
 def get_realtime_prices(stocks):
     prices = {}
     for stock_symbol in stocks:
@@ -40,11 +70,11 @@ def get_recommendation(investment_amount, stocks, risk_factor):
     return recommendations
 
 st.title("Stock Recommendation App")
-os.environ["OPENAI_API_KEY"]= os.getenv("OPEN_AI_KEY")
 
-llm=OpenAI(temperature=0,
-           model_name="gpt-3.5-turbo") 
-          
+# Initialize Llama model
+HF_TOKEN = os.getenv("HF_TOKEN")
+llm = HuggingFaceLlamaLLM(api_key=HF_TOKEN, temperature=0, max_tokens=1000)
+
 investment_amount = st.number_input("Enter the amount you want to invest:", min_value=1, step=1)
 stock_symbols = st.text_input("Enter comma-separated list of stock symbols (e.g., RELIANCE.NS,TCS.NS):")
 risk_factor = st.selectbox("Choose the risk factor:", ["Low", "Medium", "High"])
@@ -60,8 +90,9 @@ if st.button("Get Recommendations"):
     realtime_prices = get_realtime_prices(stocks)
     for stock_symbol, price in realtime_prices.items():
         st.write(f"{stock_symbol}: {price}")
-    analysis=llm(f"Give detail stock analysis, Use the available data and provide investment recommendation. You have the following information available about the stocks {recommendations}. Don't show price of any stock. User has selected {risk_factor}. Write (5-6) lines investment analysis to answer user query, At the start itself give recommendation to user about the stock.")
+    
+    prompt = f"""Give detail stock analysis, Use the available data and provide investment recommendation. You have the following information available about the stocks {recommendations}. Don't show price of any stock. User has selected {risk_factor}. Write (5-6) lines investment analysis to answer user query, At the start itself give recommendation to user about the stock."""
+    
+    analysis = llm(prompt)
     st.write("\nCONCLUSION\n") 
     st.write(analysis)
-     
-
