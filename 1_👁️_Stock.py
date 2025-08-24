@@ -5,11 +5,13 @@ import requests
 import base64
 import os
 from dotenv import load_dotenv, dotenv_values
+
 # Custom CSS for setting gradient background and styling
 st.set_page_config(
     page_title="StockSavvy",
     page_icon="💲",
 )       
+
 # Page title and description
 st.title("📈 StockSavvy") 
 
@@ -25,7 +27,7 @@ def add_bg_from_local(image_file):
     </style>
     """
     st.markdown(bg_image, unsafe_allow_html=True)
-# add_bg_from_local("img.gif")    
+
 st.markdown(
     """
     <style>
@@ -35,7 +37,6 @@ st.markdown(
         color: white;
     }
     
-    }
     .stButton>button {
         background-color: #3498db;
         color: white;
@@ -63,8 +64,10 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
 load_dotenv()
 stock_keys = os.getenv("stock_keys")
+
 def get_financial_news(query):
     api_key = os.getenv("NEWS_API")
     # Modify the query to include keywords related to finance or company stocks
@@ -93,10 +96,6 @@ def get_realtime_stock_data(symbol, stock_keys):
     else:
         st.error("Failed to fetch real-time data. Please try again later.")
         return None
-        
-        
-
- 
 
 # Input field for user's name
 name = st.text_input("May I know your name ?")
@@ -127,20 +126,17 @@ if name:
     # Clear button
     with col3:
         clear_button = st.button("🔄 Clear")
-    # with col4:
-    #     stock_data_button = st.button("📈Stock")
 
     # Analyze the query and display results if Enter button is clicked
     if enter_button:
         if query:
             with st.spinner('⏳ Gathering all required information and analyzing. Please wait...'):
                 out = Analyze_stock(query, risk_parameter, name) 
-                 
 
             st.success('✅ Done!')
             st.write(out)
             
-# Generate PDF report
+            # Generate PDF report
             pdf = FPDF()
             pdf.add_page()
             pdf.set_font("Arial", size=12)
@@ -162,16 +158,7 @@ if name:
                 st.warning("No financial news articles found for the given query.")
         else:
             st.warning('⚠ Please input your query before clicking News.')
-    # elif stock_data_button:
-    #         if query:
-    #             st.write(f"Fetching real-time data for {query}...")
-    #             realtime_data = get_realtime_stock_data(query, stock_keys)
-    #             if realtime_data:
-    #                 st.subheader("Real-Time Stock Data")
-    #                 for key, value in realtime_data.items():
-    #                     st.write(f"- {key}: {value}")
-    #         else:
-    #             st.warning(f"No real-time data found for symbol {query}. Please check the symbol and try again.")
+
     # Clear input if Clear button is clicked
     if clear_button:
         query = ''
