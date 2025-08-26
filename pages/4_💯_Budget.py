@@ -1,4 +1,3 @@
-
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -25,6 +24,154 @@ import xgboost as xgb
 # Technical Analysis
 import ta
 from huggingface_hub import InferenceClient
+import json
+
+# Popular stock symbols database
+POPULAR_STOCKS = {
+    # Technology
+    "AAPL": "Apple Inc.",
+    "GOOGL": "Alphabet Inc. Class A",
+    "GOOG": "Alphabet Inc. Class C", 
+    "MSFT": "Microsoft Corporation",
+    "AMZN": "Amazon.com Inc.",
+    "TSLA": "Tesla Inc.",
+    "META": "Meta Platforms Inc.",
+    "NVDA": "NVIDIA Corporation",
+    "NFLX": "Netflix Inc.",
+    "ADBE": "Adobe Inc.",
+    "CRM": "Salesforce Inc.",
+    "ORCL": "Oracle Corporation",
+    "IBM": "International Business Machines",
+    "INTC": "Intel Corporation",
+    "AMD": "Advanced Micro Devices",
+    
+    # Finance
+    "JPM": "JPMorgan Chase & Co.",
+    "BAC": "Bank of America Corp",
+    "WFC": "Wells Fargo & Company",
+    "GS": "Goldman Sachs Group Inc.",
+    "MS": "Morgan Stanley",
+    "C": "Citigroup Inc.",
+    "V": "Visa Inc.",
+    "MA": "Mastercard Inc.",
+    "PYPL": "PayPal Holdings Inc.",
+    "SQ": "Block Inc.",
+    
+    # Healthcare
+    "JNJ": "Johnson & Johnson",
+    "PFE": "Pfizer Inc.",
+    "UNH": "UnitedHealth Group Inc.",
+    "MRNA": "Moderna Inc.",
+    "ABBV": "AbbVie Inc.",
+    "TMO": "Thermo Fisher Scientific",
+    "DHR": "Danaher Corporation",
+    "BMY": "Bristol Myers Squibb",
+    "MRK": "Merck & Co Inc.",
+    "LLY": "Eli Lilly and Company",
+    
+    # Consumer
+    "WMT": "Walmart Inc.",
+    "PG": "Procter & Gamble Company",
+    "KO": "Coca-Cola Company",
+    "PEP": "PepsiCo Inc.",
+    "MCD": "McDonald's Corporation",
+    "NKE": "Nike Inc.",
+    "SBUX": "Starbucks Corporation",
+    "DIS": "Walt Disney Company",
+    "HD": "Home Depot Inc.",
+    "LOW": "Lowe's Companies Inc.",
+    
+    # Energy
+    "XOM": "Exxon Mobil Corporation",
+    "CVX": "Chevron Corporation",
+    "COP": "ConocoPhillips",
+    "SLB": "Schlumberger NV",
+    "EOG": "EOG Resources Inc.",
+    
+    # Industrial
+    "BA": "Boeing Company",
+    "CAT": "Caterpillar Inc.",
+    "GE": "General Electric Company",
+    "MMM": "3M Company",
+    "HON": "Honeywell International",
+    
+    # Indian Stocks (NSE)
+    "RELIANCE.NS": "Reliance Industries Limited",
+    "TCS.NS": "Tata Consultancy Services",
+    "HDFCBANK.NS": "HDFC Bank Limited",
+    "ICICIBANK.NS": "ICICI Bank Limited",
+    "HINDUNILVR.NS": "Hindustan Unilever Limited",
+    "INFY.NS": "Infosys Limited",
+    "ITC.NS": "ITC Limited",
+    "SBIN.NS": "State Bank of India",
+    "BHARTIARTL.NS": "Bharti Airtel Limited",
+    "KOTAKBANK.NS": "Kotak Mahindra Bank",
+    "LT.NS": "Larsen & Toubro Limited",
+    "HCLTECH.NS": "HCL Technologies Limited",
+    "ASIANPAINT.NS": "Asian Paints Limited",
+    "MARUTI.NS": "Maruti Suzuki India Limited",
+    "TITAN.NS": "Titan Company Limited"
+}
+
+class StockSearcher:
+    def __init__(self):
+        self.popular_stocks = POPULAR_STOCKS
+        
+    def search_stocks(self, query, limit=10):
+        """Search stocks based on query"""
+        if not query or len(query) < 2:
+            return []
+        
+        query = query.upper().strip()
+        results = []
+        
+        # Search in popular stocks
+        for symbol, name in self.popular_stocks.items():
+            if (query in symbol.upper() or 
+                query in name.upper() or
+                any(word.startswith(query) for word in name.upper().split())):
+                results.append({
+                    'symbol': symbol,
+                    'name': name,
+                    'display': f"{symbol} - {name}"
+                })
+        
+        # Try to validate if it's a direct symbol match
+        if len(query) >= 2 and query not in [r['symbol'] for r in results]:
+            try:
+                # Quick validation with Yahoo Finance
+                ticker = yf.Ticker(query)
+                info = ticker.info
+                if info and 'symbol' in info:
+                    results.insert(0, {
+                        'symbol': query,
+                        'name': info.get('longName', info.get('shortName', 'Unknown')),
+                        'display': f"{query} - {info.get('longName', info.get('shortName', 'Unknown'))}"
+                    })
+            except:
+                pass
+        
+        return results[:limit]
+    
+    def validate_symbol(self, symbol):
+        """Validate if symbol exists and get basic info"""
+        try:
+            ticker = yf.Ticker(symbol)
+            info = ticker.info
+            hist = ticker.history(period="5d")
+            
+            if len(hist) > 0 and info.get('symbol'):
+                return {
+                    'valid': True,
+                    'name': info.get('longName', info.get('shortName', 'Unknown')),
+                    'sector': info.get('sector', 'Unknown'),
+                    'country': info.get('country', 'Unknown'),
+                    'current_price': hist['Close'].iloc[-1] if len(hist) > 0 else 0
+                }
+        except:
+            pass
+        
+        return {'valid': False}
 
 class HuggingFaceLlamaLLM:
     def __init__(self, api_key, model_name="meta-llama/Llama-3.1-8B-Instruct", max_tokens=1500, temperature=0.1):
@@ -782,6 +929,202 @@ def generate_advanced_prompt(recommendations, risk_factor, investment_amount, mo
     
     return prompt
 
+def stock_selector_interface():
+    """Create interactive stock selection interface"""
+    
+    # Initialize session state
+    if 'selected_stocks' not in st.session_state:
+        st.session_state.selected_stocks = {}
+    if 'stock_searcher' not in st.session_state:
+        st.session_state.stock_searcher = StockSearcher()
+    
+    st.markdown("### 🔍 Smart Stock Selection")
+    
+    # Stock search interface
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        search_query = st.text_input(
+            "🔎 Search Stocks",
+            placeholder="Type company name or symbol (e.g., 'Apple', 'AAPL', 'Reliance')",
+            help="Start typing to search for stocks. You can search by company name or symbol."
+        )
+    
+    with col2:
+        if st.button("🎲 Add Random Popular Stocks", help="Add 4 random popular stocks"):
+            import random
+            popular_symbols = list(POPULAR_STOCKS.keys())
+            random_stocks = random.sample(popular_symbols, min(4, len(popular_symbols)))
+            
+            for symbol in random_stocks:
+                if symbol not in st.session_state.selected_stocks:
+                    validation = st.session_state.stock_searcher.validate_symbol(symbol)
+                    if validation['valid']:
+                        st.session_state.selected_stocks[symbol] = {
+                            'name': validation['name'],
+                            'sector': validation.get('sector', 'Unknown'),
+                            'country': validation.get('country', 'Unknown'),
+                            'current_price': validation.get('current_price', 0)
+                        }
+            st.rerun()
+    
+    # Display search results
+    if search_query and len(search_query.strip()) >= 2:
+        with st.spinner("🔍 Searching stocks..."):
+            search_results = st.session_state.stock_searcher.search_stocks(search_query.strip())
+        
+        if search_results:
+            st.markdown("#### 📋 Search Results")
+            
+            # Create columns for search results
+            for i, result in enumerate(search_results[:6]):  # Show max 6 results
+                col1, col2, col3 = st.columns([3, 1, 1])
+                
+                with col1:
+                    st.write(f"**{result['symbol']}** - {result['name']}")
+                
+                with col2:
+                    # Check if already selected
+                    is_selected = result['symbol'] in st.session_state.selected_stocks
+                    button_text = "✅ Added" if is_selected else "➕ Add"
+                    button_disabled = is_selected
+                
+                with col3:
+                    if st.button(
+                        button_text, 
+                        key=f"add_stock_{result['symbol']}", 
+                        disabled=button_disabled,
+                        help=f"Add {result['symbol']} to analysis"
+                    ):
+                        # Validate and add stock
+                        with st.spinner(f"Validating {result['symbol']}..."):
+                            validation = st.session_state.stock_searcher.validate_symbol(result['symbol'])
+                        
+                        if validation['valid']:
+                            st.session_state.selected_stocks[result['symbol']] = {
+                                'name': validation['name'],
+                                'sector': validation.get('sector', 'Unknown'),
+                                'country': validation.get('country', 'Unknown'),
+                                'current_price': validation.get('current_price', 0)
+                            }
+                            st.success(f"✅ Added {result['symbol']} successfully!")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Could not validate {result['symbol']}")
+        else:
+            st.info("🔍 No stocks found. Try different keywords.")
+    
+    # Display selected stocks
+    if st.session_state.selected_stocks:
+        st.markdown("#### 📊 Selected Stocks for Analysis")
+        
+        # Create a nice display of selected stocks
+        selected_data = []
+        for symbol, info in st.session_state.selected_stocks.items():
+            selected_data.append({
+                'Symbol': symbol,
+                'Company Name': info['name'],
+                'Sector': info['sector'],
+                'Country': info['country'],
+                'Current Price': f"${info['current_price']:.2f}" if info['current_price'] > 0 else "N/A"
+            })
+        
+        selected_df = pd.DataFrame(selected_data)
+        st.dataframe(selected_df, use_container_width=True, hide_index=True)
+        
+        # Stock management buttons
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("📈 Total Selected", len(st.session_state.selected_stocks))
+        
+        with col2:
+            sectors = set([info['sector'] for info in st.session_state.selected_stocks.values()])
+            st.metric("🏢 Sectors", len(sectors))
+        
+        with col3:
+            countries = set([info['country'] for info in st.session_state.selected_stocks.values()])
+            st.metric("🌍 Countries", len(countries))
+        
+        with col4:
+            avg_price = np.mean([info['current_price'] for info in st.session_state.selected_stocks.values() if info['current_price'] > 0])
+            st.metric("💰 Avg Price", f"${avg_price:.2f}" if avg_price > 0 else "N/A")
+        
+        # Remove stocks interface
+        st.markdown("##### 🗑️ Remove Stocks")
+        
+        if len(st.session_state.selected_stocks) > 0:
+            stocks_to_remove = st.multiselect(
+                "Select stocks to remove:",
+                options=list(st.session_state.selected_stocks.keys()),
+                format_func=lambda x: f"{x} - {st.session_state.selected_stocks[x]['name']}"
+            )
+            
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                if st.button("🗑️ Remove Selected", disabled=len(stocks_to_remove)==0):
+                    for stock in stocks_to_remove:
+                        del st.session_state.selected_stocks[stock]
+                    st.success(f"✅ Removed {len(stocks_to_remove)} stock(s)")
+                    st.rerun()
+            
+            with col2:
+                if st.button("🧹 Clear All", help="Remove all selected stocks"):
+                    st.session_state.selected_stocks = {}
+                    st.success("✅ Cleared all stocks")
+                    st.rerun()
+        
+        # Quick Add Popular Stocks
+        if len(st.session_state.selected_stocks) < 8:
+            with st.expander("⚡ Quick Add Popular Stocks"):
+                st.markdown("Click to add popular stocks from different categories:")
+                
+                categories = {
+                    "🔥 Tech Giants": ["AAPL", "GOOGL", "MSFT", "AMZN", "META"],
+                    "💰 Finance": ["JPM", "BAC", "V", "MA", "GS"],
+                    "🏥 Healthcare": ["JNJ", "PFE", "UNH", "ABBV", "MRK"],
+                    "🇮🇳 Indian Stocks": ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ITC.NS"]
+                }
+                
+                cols = st.columns(len(categories))
+                
+                for i, (category, symbols) in enumerate(categories.items()):
+                    with cols[i]:
+                        st.markdown(f"**{category}**")
+                        for symbol in symbols[:3]:  # Show only 3 per category
+                            if symbol not in st.session_state.selected_stocks:
+                                if st.button(
+                                    f"{symbol}", 
+                                    key=f"quick_add_{symbol}",
+                                    help=f"Add {symbol} - {POPULAR_STOCKS.get(symbol, 'Unknown')}"
+                                ):
+                                    validation = st.session_state.stock_searcher.validate_symbol(symbol)
+                                    if validation['valid']:
+                                        st.session_state.selected_stocks[symbol] = {
+                                            'name': validation['name'],
+                                            'sector': validation.get('sector', 'Unknown'),
+                                            'country': validation.get('country', 'Unknown'),
+                                            'current_price': validation.get('current_price', 0)
+                                        }
+                                        st.rerun()
+    
+    else:
+        st.info("🎯 No stocks selected yet. Use the search above to find and add stocks for analysis.")
+        
+        # Show some examples
+        st.markdown("#### 💡 Quick Examples")
+        example_searches = [
+            "Try searching: **Apple**, **Tesla**, **Microsoft**, **Google**",
+            "For Indian stocks: **Reliance**, **TCS**, **HDFC**, **Infosys**",
+            "Or use symbols directly: **AAPL**, **TSLA**, **MSFT**, **GOOGL**"
+        ]
+        
+        for example in example_searches:
+            st.markdown(f"• {example}")
+    
+    return list(st.session_state.selected_stocks.keys())
+
 # Streamlit App
 def main():
     st.set_page_config(
@@ -808,11 +1151,12 @@ def main():
         border-radius: 10px;
         margin: 0.5rem;
     }
+
     </style>
     """, unsafe_allow_html=True)
     
     st.markdown('<h1 class="main-header">🤖 Advanced AI Stock Analyzer</h1>', unsafe_allow_html=True)
-    # st.markdown("### *Powered by Machine Learning & Technical Analysis*")
+
     
     # Initialize components
     analyzer = AdvancedStockAnalyzer()
@@ -824,422 +1168,458 @@ def main():
     
     llm = HuggingFaceLlamaLLM(api_key=HF_TOKEN)
     
-    # Sidebar Configuration
-    with st.sidebar:
-        st.header("📊 Analysis Configuration")
-        
-        # Investment parameters
-        investment_amount = st.number_input(
-            "💰 Investment Amount ($)",
-            min_value=100,
-            value=10000,
-            step=500,
-            help="Enter your total investment amount"
-        )
-        
-        # Stock symbols
-        stock_symbols = st.text_input(
-            "📈 Stock Symbols",
-            value="AAPL,GOOGL,MSFT,TSLA",
-            help="Enter comma-separated stock symbols (e.g., AAPL,GOOGL,MSFT)"
-        )
-        
-        # Risk factor
-        risk_factor = st.selectbox(
-            "⚖️ Risk Tolerance",
-            ["Low", "Medium", "High"],
-            index=1,
-            help="Select your risk tolerance level"
-        )
-        
-        # ML Model selection
-        ml_model = st.selectbox(
-            "🤖 ML Model",
-            ["Random Forest", "XGBoost", "Gradient Boosting", "SVM", 
-             "Neural Network", "Logistic Regression", "Ensemble Voting"],
-            index=0,
-            help="Choose the machine learning model for predictions"
-        )
-        
-        # Advanced options
-        with st.expander("🔧 Advanced Options"):
-            prediction_horizon = st.selectbox(
-                "Prediction Horizon",
-                [3, 5, 7, 10],
+
+    selected_stocks = stock_selector_interface()
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Sidebar Configuration (only show if stocks are selected)
+    if selected_stocks:
+        with st.sidebar:
+            st.header("📊 Analysis Configuration")
+            
+            # Investment parameters
+            investment_amount = st.number_input(
+                "💰 Investment Amount ($)",
+                min_value=100,
+                value=10000,
+                step=500,
+                help="Enter your total investment amount"
+            )
+            
+            # Display selected stocks
+            st.markdown("#### 📈 Selected Stocks")
+            for stock in selected_stocks:
+                stock_info = st.session_state.selected_stocks.get(stock, {})
+                st.write(f"• **{stock}** - {stock_info.get('name', 'Unknown')}")
+            
+            # Risk factor
+            risk_factor = st.selectbox(
+                "⚖️ Risk Tolerance",
+                ["Low", "Medium", "High"],
                 index=1,
-                help="Days ahead to predict"
+                help="Select your risk tolerance level"
             )
             
-            min_confidence = st.slider(
-                "Minimum Confidence Threshold",
-                0.5, 0.95, 0.7,
-                help="Minimum model confidence for buy recommendations"
+            # ML Model selection
+            ml_model = st.selectbox(
+                "🤖 ML Model",
+                ["Random Forest", "XGBoost", "Gradient Boosting", "SVM", 
+                 "Neural Network", "Logistic Regression", "Ensemble Voting"],
+                index=0,
+                help="Choose the machine learning model for predictions"
             )
             
-            enable_visualizations = st.checkbox(
-                "Enable Advanced Visualizations",
-                value=True
-            )
+            # Advanced options
+            with st.expander("🔧 Advanced Options"):
+                prediction_horizon = st.selectbox(
+                    "Prediction Horizon",
+                    [3, 5, 7, 10],
+                    index=1,
+                    help="Days ahead to predict"
+                )
+                
+                min_confidence = st.slider(
+                    "Minimum Confidence Threshold",
+                    0.5, 0.95, 0.7,
+                    help="Minimum model confidence for buy recommendations"
+                )
+                
+                enable_visualizations = st.checkbox(
+                    "Enable Advanced Visualizations",
+                    value=True
+                )
     
-    # Main Analysis Section
-    col1, col2 = st.columns([2, 1])
-    
-    with col2:
-        st.markdown("### 🎯 Quick Stats")
-        if stock_symbols:
-            stocks_list = [s.strip().upper() for s in stock_symbols.split(",")]
-            st.metric("Stocks to Analyze", len(stocks_list))
+    # Main Analysis Section (only show if stocks are selected)
+    if selected_stocks:
+        col1, col2 = st.columns([2, 1])
+        
+        with col2:
+            st.markdown("### 🎯 Quick Stats")
+            st.metric("Stocks to Analyze", len(selected_stocks))
             st.metric("Investment Amount", f"${investment_amount:,}")
             st.metric("Risk Level", risk_factor)
             st.metric("ML Model", ml_model)
-    
-    # Analysis Button
-    if st.button("🚀 Run Advanced Analysis", type="primary"):
-        if not stock_symbols.strip():
-            st.error("❌ Please enter stock symbols")
-            return
         
-        stocks = [symbol.strip().upper() for symbol in stock_symbols.split(",")]
-        
-        # Progress tracking
-        progress_container = st.container()
-        with progress_container:
-            st.info("🔄 Starting advanced analysis...")
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-        
-        try:
-            # Phase 1: Data Collection
-            status_text.text("📊 Collecting market data...")
-            stocks_data = {}
+        # Analysis Button
+        if st.button("🚀 Run Advanced Analysis", type="primary"):
+            # Progress tracking
+            progress_container = st.container()
+            with progress_container:
+                st.info("🔄 Starting advanced analysis...")
+                progress_bar = st.progress(0)
+                status_text = st.empty()
             
-            for i, stock in enumerate(stocks):
-                try:
-                    # Get current price and basic info
-                    ticker = yf.Ticker(stock)
-                    info = ticker.info
-                    current_price = ticker.history(period="1d")['Close'].iloc[-1]
-                    price_history = ticker.history(period="6mo")
+            try:
+                # Phase 1: Data Collection
+                status_text.text("📊 Collecting market data...")
+                stocks_data = {}
+                
+                for i, stock in enumerate(selected_stocks):
+                    try:
+                        # Get current price and basic info
+                        ticker = yf.Ticker(stock)
+                        info = ticker.info
+                        current_price = ticker.history(period="1d")['Close'].iloc[-1]
+                        price_history = ticker.history(period="6mo")
+                        
+                        stocks_data[stock] = {
+                            'current_price': current_price,
+                            'info': info,
+                            'price_history': price_history
+                        }
+                    except:
+                        st.warning(f"⚠️ Could not fetch data for {stock}")
                     
-                    stocks_data[stock] = {
-                        'current_price': current_price,
-                        'info': info,
-                        'price_history': price_history
+                    progress_bar.progress((i + 1) / (len(selected_stocks) * 3))
+                
+                # Phase 2: ML Model Training
+                status_text.text(f"🤖 Training {ml_model} model...")
+                model, scaler, metrics = analyzer.train_model(selected_stocks, ml_model, risk_factor, progress_bar)
+                
+                if model is None:
+                    st.error("❌ Failed to train ML model")
+                    return
+                
+                # Phase 3: Generate Predictions
+                status_text.text("🔮 Generating predictions...")
+                recommendations = {}
+                
+                for i, stock in enumerate(selected_stocks):
+                    prediction_result = analyzer.get_prediction(stock, model, scaler, risk_factor)
+                    
+                    recommendations[stock] = {
+                        'recommendation': prediction_result['recommendation'],
+                        'confidence': prediction_result['confidence'],
+                        'probabilities': prediction_result['probabilities'],
+                        'volatility': prediction_result['volatility'],
+                        'risk_score': prediction_result['risk_score'],
+                        'current_price': stocks_data.get(stock, {}).get('current_price', 0)
                     }
-                except:
-                    st.warning(f"⚠️ Could not fetch data for {stock}")
+                    
+                    progress_bar.progress((len(selected_stocks) * 2 + i + 1) / (len(selected_stocks) * 3))
                 
-                progress_bar.progress((i + 1) / (len(stocks) * 3))
-            
-            # Phase 2: ML Model Training
-            status_text.text(f"🤖 Training {ml_model} model...")
-            model, scaler, metrics = analyzer.train_model(stocks, ml_model, risk_factor, progress_bar)
-            
-            if model is None:
-                st.error("❌ Failed to train ML model")
-                return
-            
-    # Phase 3: Generate Predictions
-            status_text.text("🔮 Generating predictions...")
-            recommendations = {}
-            
-            for i, stock in enumerate(stocks):
-                prediction_result = analyzer.get_prediction(stock, model, scaler, risk_factor)
+                # Clear progress indicators
+                progress_container.empty()
                 
-                recommendations[stock] = {
-                    'recommendation': prediction_result['recommendation'],
-                    'confidence': prediction_result['confidence'],
-                    'probabilities': prediction_result['probabilities'],
-                    'volatility': prediction_result['volatility'],
-                    'risk_score': prediction_result['risk_score'],
-                    'current_price': stocks_data.get(stock, {}).get('current_price', 0)
-                }
+                # Display Results
+                st.markdown("## 📊 Analysis Results")
                 
-                progress_bar.progress((len(stocks) * 2 + i + 1) / (len(stocks) * 3))
-            
-            # Clear progress indicators
-            progress_container.empty()
-            
-            # Display Results
-            st.markdown("## 📊 Analysis Results")
-            
-            # Summary metrics
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                buy_count = len([r for r in recommendations.values() if r['recommendation'] in ['Buy', 'Strong Buy']])
-                st.metric("🟢 Buy Signals", buy_count, f"{buy_count/len(stocks)*100:.1f}%")
-            
-            with col2:
-                avg_confidence = np.mean([r['confidence'] for r in recommendations.values()])
-                st.metric("🎯 Avg Confidence", f"{avg_confidence:.3f}", f"{avg_confidence*100:.1f}%")
-            
-            with col3:
-                model_accuracy = metrics.get('test_accuracy', 0)
-                st.metric("🤖 Model Accuracy", f"{model_accuracy:.3f}", f"{model_accuracy*100:.1f}%")
-            
-            with col4:
-                avg_volatility = np.mean([r['volatility'] for r in recommendations.values()])
-                volatility_level = "Low" if avg_volatility < 0.025 else "Medium" if avg_volatility < 0.04 else "High"
-                st.metric("📈 Portfolio Volatility", f"{avg_volatility:.4f}", volatility_level)
-            
-            # Detailed Recommendations Table
-            st.markdown("### 🎯 ML-Powered Recommendations")
-            
-            # Create recommendations DataFrame
-            rec_data = []
-            for stock, rec in recommendations.items():
-                rec_data.append({
-                    'Stock': stock,
-                    'Recommendation': rec['recommendation'],
-                    'Confidence': f"{rec['confidence']:.3f}",
-                    'Current Price': f"${rec['current_price']:.2f}",
-                    'Volatility': f"{rec['volatility']:.4f}",
-                    'Risk Assessment': rec['risk_score'],
-                    'Hold Prob': f"{rec['probabilities']['Hold']:.2f}",
-                    'Buy Prob': f"{rec['probabilities']['Buy']:.2f}",
-                    'Strong Buy Prob': f"{rec['probabilities']['Strong Buy']:.2f}"
-                })
-            
-            rec_df = pd.DataFrame(rec_data)
-            
-            # Color-code recommendations
-            def color_recommendations(val):
-                if val == 'Strong Buy':
-                    return 'background-color: #90EE90'
-                elif val == 'Buy':
-                    return 'background-color: #98FB98'
-                else:
-                    return 'background-color: #FFE4B5'
-            
-            styled_df = rec_df.style.applymap(color_recommendations, subset=['Recommendation'])
-            st.dataframe(styled_df, use_container_width=True)
-            
-            # Model Performance Metrics
-            with st.expander("🤖 Model Performance Details"):
-                col1, col2, col3 = st.columns(3)
+                # Summary metrics
+                col1, col2, col3, col4 = st.columns(4)
                 
                 with col1:
-                    st.metric("Training Accuracy", f"{metrics.get('train_accuracy', 0):.4f}")
+                    buy_count = len([r for r in recommendations.values() if r['recommendation'] in ['Buy', 'Strong Buy']])
+                    st.metric("🟢 Buy Signals", buy_count, f"{buy_count/len(selected_stocks)*100:.1f}%")
                 
                 with col2:
-                    st.metric("Test Accuracy", f"{metrics.get('test_accuracy', 0):.4f}")
+                    avg_confidence = np.mean([r['confidence'] for r in recommendations.values()])
+                    st.metric("🎯 Avg Confidence", f"{avg_confidence:.3f}", f"{avg_confidence*100:.1f}%")
                 
                 with col3:
-                    st.metric("Cross-Validation Score", f"{metrics.get('cv_scores', 0):.4f}")
+                    model_accuracy = metrics.get('test_accuracy', 0)
+                    st.metric("🤖 Model Accuracy", f"{model_accuracy:.3f}", f"{model_accuracy*100:.1f}%")
                 
-                # Feature importance (for tree-based models)
-                if hasattr(model, 'feature_importances_') and len(analyzer.feature_names) > 0:
-                    st.markdown("#### 📈 Feature Importance")
-                    
-                    feature_imp = pd.DataFrame({
-                        'Feature': analyzer.feature_names,
-                        'Importance': model.feature_importances_
-                    }).sort_values('Importance', ascending=False).head(10)
-                    
-                    fig_imp = px.bar(
-                        feature_imp, 
-                        x='Importance', 
-                        y='Feature',
-                        orientation='h',
-                        title="Top 10 Most Important Features"
-                    )
-                    st.plotly_chart(fig_imp, use_container_width=True)
-            
-            # Advanced Visualizations
-            if enable_visualizations:
-                st.markdown("### 📊 Advanced Visualizations")
+                with col4:
+                    avg_volatility = np.mean([r['volatility'] for r in recommendations.values()])
+                    volatility_level = "Low" if avg_volatility < 0.025 else "Medium" if avg_volatility < 0.04 else "High"
+                    st.metric("📈 Portfolio Volatility", f"{avg_volatility:.4f}", volatility_level)
                 
-                try:
-                    viz_fig = create_advanced_visualizations(stocks_data, recommendations)
-                    st.plotly_chart(viz_fig, use_container_width=True)
-                except Exception as e:
-                    st.warning(f"Could not create advanced visualizations: {str(e)}")
+                # Detailed Recommendations Table
+                st.markdown("### 🎯 ML-Powered Recommendations")
                 
-                # Individual stock charts
-                st.markdown("#### 📈 Individual Stock Analysis")
+                # Create recommendations DataFrame
+                rec_data = []
+                for stock, rec in recommendations.items():
+                    rec_data.append({
+                        'Stock': stock,
+                        'Company': st.session_state.selected_stocks.get(stock, {}).get('name', 'Unknown'),
+                        'Recommendation': rec['recommendation'],
+                        'Confidence': f"{rec['confidence']:.3f}",
+                        'Current Price': f"${rec['current_price']:.2f}",
+                        'Volatility': f"{rec['volatility']:.4f}",
+                        'Risk Assessment': rec['risk_score'],
+                        'Hold Prob': f"{rec['probabilities']['Hold']:.2f}",
+                        'Buy Prob': f"{rec['probabilities']['Buy']:.2f}",
+                        'Strong Buy Prob': f"{rec['probabilities']['Strong Buy']:.2f}"
+                    })
                 
-                selected_stock = st.selectbox("Select stock for detailed analysis:", stocks)
+                rec_df = pd.DataFrame(rec_data)
                 
-                if selected_stock in stocks_data and 'price_history' in stocks_data[selected_stock]:
-                    stock_data = stocks_data[selected_stock]['price_history']
-                    rec = recommendations[selected_stock]
-                    
-                    # Create candlestick chart
-                    fig_stock = go.Figure(data=go.Candlestick(
-                        x=stock_data.index,
-                        open=stock_data['Open'],
-                        high=stock_data['High'],
-                        low=stock_data['Low'],
-                        close=stock_data['Close'],
-                        name=selected_stock
-                    ))
-                    
-                    # Add moving averages
-                    fig_stock.add_trace(go.Scatter(
-                        x=stock_data.index,
-                        y=stock_data['Close'].rolling(20).mean(),
-                        name='MA20',
-                        line=dict(color='orange')
-                    ))
-                    
-                    fig_stock.add_trace(go.Scatter(
-                        x=stock_data.index,
-                        y=stock_data['Close'].rolling(50).mean(),
-                        name='MA50',
-                        line=dict(color='blue')
-                    ))
-                    
-                    fig_stock.update_layout(
-                        title=f"{selected_stock} - {rec['recommendation']} (Confidence: {rec['confidence']:.3f})",
-                        xaxis_title="Date",
-                        yaxis_title="Price",
-                        height=500
-                    )
-                    
-                    st.plotly_chart(fig_stock, use_container_width=True)
-                    
-                    # Stock details
+                # Color-code recommendations
+                def color_recommendations(val):
+                    if val == 'Strong Buy':
+                        return 'background-color: #90EE90'
+                    elif val == 'Buy':
+                        return 'background-color: #98FB98'
+                    else:
+                        return 'background-color: #FFE4B5'
+                
+                styled_df = rec_df.style.applymap(color_recommendations, subset=['Recommendation'])
+                st.dataframe(styled_df, use_container_width=True)
+                
+                # Model Performance Metrics
+                with st.expander("🤖 Model Performance Details"):
                     col1, col2, col3 = st.columns(3)
                     
                     with col1:
-                        st.metric("Current Price", f"${rec['current_price']:.2f}")
-                        st.metric("Volatility", f"{rec['volatility']:.4f}")
+                        st.metric("Training Accuracy", f"{metrics.get('train_accuracy', 0):.4f}")
                     
                     with col2:
-                        st.metric("ML Confidence", f"{rec['confidence']:.3f}")
-                        st.metric("Risk Assessment", rec['risk_score'])
+                        st.metric("Test Accuracy", f"{metrics.get('test_accuracy', 0):.4f}")
                     
                     with col3:
-                        stock_info = stocks_data[selected_stock].get('info', {})
-                        market_cap = stock_info.get('marketCap', 0)
-                        if market_cap:
-                            st.metric("Market Cap", f"${market_cap/1e9:.1f}B")
+                        st.metric("Cross-Validation Score", f"{metrics.get('cv_scores', 0):.4f}")
+                    
+                    # Feature importance (for tree-based models)
+                    if hasattr(model, 'feature_importances_') and len(analyzer.feature_names) > 0:
+                        st.markdown("#### 📈 Feature Importance")
                         
-                        pe_ratio = stock_info.get('forwardPE', 0)
-                        if pe_ratio:
-                            st.metric("Forward P/E", f"{pe_ratio:.1f}")
-            
-            # AI-Generated Analysis
-            st.markdown("### 🧠 AI Investment Analysis")
-            
-            with st.spinner("🤖 Generating comprehensive analysis..."):
-                enhanced_prompt = generate_advanced_prompt(
-                    recommendations, risk_factor, investment_amount, metrics, ml_model
-                )
+                        feature_imp = pd.DataFrame({
+                            'Feature': analyzer.feature_names,
+                            'Importance': model.feature_importances_
+                        }).sort_values('Importance', ascending=False).head(10)
+                        
+                        fig_imp = px.bar(
+                            feature_imp, 
+                            x='Importance', 
+                            y='Feature',
+                            orientation='h',
+                            title="Top 10 Most Important Features"
+                        )
+                        st.plotly_chart(fig_imp, use_container_width=True)
                 
-                ai_analysis = llm(enhanced_prompt)
-            
-            st.markdown("#### 📝 Professional Investment Report")
-            st.write(ai_analysis)
-            
-            # Portfolio Allocation Suggestion
-            st.markdown("### 💼 Suggested Portfolio Allocation")
-            
-            # Calculate suggested allocation
-            buy_stocks = {k: v for k, v in recommendations.items() if v['recommendation'] in ['Buy', 'Strong Buy']}
-            
-            if buy_stocks:
-                # Weight by confidence and inverse volatility
-                weights = {}
-                total_weight = 0
-                
-                for stock, rec in buy_stocks.items():
-                    # Higher weight for higher confidence and lower volatility
-                    weight = rec['confidence'] * (1 / (rec['volatility'] + 0.01))
-                    if rec['recommendation'] == 'Strong Buy':
-                        weight *= 1.5  # Boost strong buy signals
+                # Advanced Visualizations
+                if enable_visualizations:
+                    st.markdown("### 📊 Advanced Visualizations")
                     
-                    weights[stock] = weight
-                    total_weight += weight
-                
-                # Normalize weights
-                allocation_data = []
-                remaining_amount = investment_amount
-                
-                for stock, weight in weights.items():
-                    allocation_pct = (weight / total_weight) * 100
-                    allocation_amount = (weight / total_weight) * investment_amount
+                    try:
+                        viz_fig = create_advanced_visualizations(stocks_data, recommendations)
+                        st.plotly_chart(viz_fig, use_container_width=True)
+                    except Exception as e:
+                        st.warning(f"Could not create advanced visualizations: {str(e)}")
                     
-                    allocation_data.append({
+                    # Individual stock charts
+                    st.markdown("#### 📈 Individual Stock Analysis")
+                    
+                    selected_stock = st.selectbox("Select stock for detailed analysis:", selected_stocks)
+                    
+                    if selected_stock in stocks_data and 'price_history' in stocks_data[selected_stock]:
+                        stock_data = stocks_data[selected_stock]['price_history']
+                        rec = recommendations[selected_stock]
+                        
+                        # Create candlestick chart
+                        fig_stock = go.Figure(data=go.Candlestick(
+                            x=stock_data.index,
+                            open=stock_data['Open'],
+                            high=stock_data['High'],
+                            low=stock_data['Low'],
+                            close=stock_data['Close'],
+                            name=selected_stock
+                        ))
+                        
+                        # Add moving averages
+                        fig_stock.add_trace(go.Scatter(
+                            x=stock_data.index,
+                            y=stock_data['Close'].rolling(20).mean(),
+                            name='MA20',
+                            line=dict(color='orange')
+                        ))
+                        
+                        fig_stock.add_trace(go.Scatter(
+                            x=stock_data.index,
+                            y=stock_data['Close'].rolling(50).mean(),
+                            name='MA50',
+                            line=dict(color='blue')
+                        ))
+                        
+                        fig_stock.update_layout(
+                            title=f"{selected_stock} - {rec['recommendation']} (Confidence: {rec['confidence']:.3f})",
+                            xaxis_title="Date",
+                            yaxis_title="Price",
+                            height=500
+                        )
+                        
+                        st.plotly_chart(fig_stock, use_container_width=True)
+                        
+                        # Stock details
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric("Current Price", f"${rec['current_price']:.2f}")
+                            st.metric("Volatility", f"{rec['volatility']:.4f}")
+                        
+                        with col2:
+                            st.metric("ML Confidence", f"{rec['confidence']:.3f}")
+                            st.metric("Risk Assessment", rec['risk_score'])
+                        
+                        with col3:
+                            stock_info = stocks_data[selected_stock].get('info', {})
+                            market_cap = stock_info.get('marketCap', 0)
+                            if market_cap:
+                                st.metric("Market Cap", f"${market_cap/1e9:.1f}B")
+                            
+                            pe_ratio = stock_info.get('forwardPE', 0)
+                            if pe_ratio:
+                                st.metric("Forward P/E", f"{pe_ratio:.1f}")
+                
+                # AI-Generated Analysis
+                st.markdown("### 🧠 AI Investment Analysis")
+                
+                with st.spinner("🤖 Generating comprehensive analysis..."):
+                    enhanced_prompt = generate_advanced_prompt(
+                        recommendations, risk_factor, investment_amount, metrics, ml_model
+                    )
+                    
+                    ai_analysis = llm(enhanced_prompt)
+                
+                st.markdown("#### 📝 Professional Investment Report")
+                st.write(ai_analysis)
+                
+                # Portfolio Allocation Suggestion
+                st.markdown("### 💼 Suggested Portfolio Allocation")
+                
+                # Calculate suggested allocation
+                buy_stocks = {k: v for k, v in recommendations.items() if v['recommendation'] in ['Buy', 'Strong Buy']}
+                
+                if buy_stocks:
+                    # Weight by confidence and inverse volatility
+                    weights = {}
+                    total_weight = 0
+                    
+                    for stock, rec in buy_stocks.items():
+                        # Higher weight for higher confidence and lower volatility
+                        weight = rec['confidence'] * (1 / (rec['volatility'] + 0.01))
+                        if rec['recommendation'] == 'Strong Buy':
+                            weight *= 1.5  # Boost strong buy signals
+                        
+                        weights[stock] = weight
+                        total_weight += weight
+                    
+                    # Normalize weights
+                    allocation_data = []
+                    remaining_amount = investment_amount
+                    
+                    for stock, weight in weights.items():
+                        allocation_pct = (weight / total_weight) * 100
+                        allocation_amount = (weight / total_weight) * investment_amount
+                        
+                        allocation_data.append({
+                            'Stock': stock,
+                            'Company': st.session_state.selected_stocks.get(stock, {}).get('name', 'Unknown'),
+                            'Allocation %': f"{allocation_pct:.1f}%",
+                            'Amount': f"${allocation_amount:,.2f}",
+                            'Shares (approx)': int(allocation_amount / recommendations[stock]['current_price']),
+                            'Recommendation': recommendations[stock]['recommendation']
+                        })
+                    
+                    allocation_df = pd.DataFrame(allocation_data)
+                    st.dataframe(allocation_df, use_container_width=True)
+                    
+                    # Pie chart of allocation
+                    fig_pie = px.pie(
+                        allocation_df, 
+                        values=[float(x.strip('$').replace(',', '')) for x in allocation_df['Amount']],
+                        names='Stock',
+                        title="Suggested Portfolio Allocation"
+                    )
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                else:
+                    st.warning("⚠️ No stocks recommended for purchase based on current analysis.")
+                    st.info("💡 Consider adjusting your risk tolerance or analyzing different stocks.")
+                
+                # Risk Analysis Summary
+                st.markdown("### ⚖️ Risk Analysis Summary")
+                
+                risk_summary = []
+                for stock, rec in recommendations.items():
+                    risk_level = "Low" if rec['volatility'] < 0.025 else "Medium" if rec['volatility'] < 0.04 else "High"
+                    risk_summary.append({
                         'Stock': stock,
-                        'Allocation %': f"{allocation_pct:.1f}%",
-                        'Amount': f"${allocation_amount:,.2f}",
-                        'Shares (approx)': int(allocation_amount / recommendations[stock]['current_price']),
-                        'Recommendation': recommendations[stock]['recommendation']
+                        'Company': st.session_state.selected_stocks.get(stock, {}).get('name', 'Unknown'),
+                        'Volatility': f"{rec['volatility']:.4f}",
+                        'Risk Level': risk_level,
+                        'Risk Score': rec['risk_score'],
+                        'Suitable for Profile': "✅" if any(x in rec['risk_score'] for x in ["Perfect", "Good", "Match"]) else "⚠️"
                     })
                 
-                allocation_df = pd.DataFrame(allocation_data)
-                st.dataframe(allocation_df, use_container_width=True)
+                risk_df = pd.DataFrame(risk_summary)
+                st.dataframe(risk_df, use_container_width=True)
                 
-                # Pie chart of allocation
-                fig_pie = px.pie(
-                    allocation_df, 
-                    values=[float(x.strip('$').replace(',', '')) for x in allocation_df['Amount']],
-                    names='Stock',
-                    title="Suggested Portfolio Allocation"
-                )
-                st.plotly_chart(fig_pie, use_container_width=True)
-            else:
-                st.warning("⚠️ No stocks recommended for purchase based on current analysis.")
-                st.info("💡 Consider adjusting your risk tolerance or analyzing different stocks.")
-            
-            # Risk Analysis Summary
-            st.markdown("### ⚖️ Risk Analysis Summary")
-            
-            risk_summary = []
-            for stock, rec in recommendations.items():
-                risk_level = "Low" if rec['volatility'] < 0.025 else "Medium" if rec['volatility'] < 0.04 else "High"
-                risk_summary.append({
-                    'Stock': stock,
-                    'Volatility': f"{rec['volatility']:.4f}",
-                    'Risk Level': risk_level,
-                    'Risk Score': rec['risk_score'],
-                    'Suitable for Profile': "✅" if any(x in rec['risk_score'] for x in ["Perfect", "Good", "Match"]) else "⚠️"
-                })
-            
-            risk_df = pd.DataFrame(risk_summary)
-            st.dataframe(risk_df, use_container_width=True)
-            
-            # Export Results
-            st.markdown("### 📥 Export Analysis")
-            
-            # Prepare export data
-            export_data = {
-                'analysis_date': datetime.datetime.now().isoformat(),
-                'investment_amount': investment_amount,
-                'risk_factor': risk_factor,
-                'ml_model': ml_model,
-                'model_metrics': metrics,
-                'recommendations': recommendations,
-                'ai_analysis': ai_analysis
-            }
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.button("📊 Download CSV Report"):
-                    csv_data = rec_df.to_csv(index=False)
-                    st.download_button(
-                        label="💾 Download CSV",
-                        data=csv_data,
-                        file_name=f"stock_analysis_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        mime="text/csv"
-                    )
-            
-            with col2:
-                if st.button("📄 Download JSON Report"):
-                    json_data = pd.Series(export_data).to_json(indent=2)
-                    st.download_button(
-                        label="💾 Download JSON",
-                        data=json_data,
-                        file_name=f"stock_analysis_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                        mime="application/json"
-                    )
+                # Export Results
+                st.markdown("### 📥 Export Analysis")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Enhanced CSV with more details
+                    enhanced_rec_data = []
+                    for stock, rec in recommendations.items():
+                        enhanced_rec_data.append({
+                            'Stock': stock,
+                            'Company_Name': st.session_state.selected_stocks.get(stock, {}).get('name', 'Unknown'),
+                            'Recommendation': rec['recommendation'],
+                            'Confidence': rec['confidence'],
+                            'Current_Price': rec['current_price'],
+                            'Volatility': rec['volatility'],
+                            'Risk_Assessment': rec['risk_score'],
+                            'Hold_Probability': rec['probabilities']['Hold'],
+                            'Buy_Probability': rec['probabilities']['Buy'], 
+                            'Strong_Buy_Probability': rec['probabilities']['Strong Buy'],
+                            'Analysis_Date': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            'ML_Model': ml_model,
+                            'Investment_Amount': investment_amount,
+                            'Risk_Profile': risk_factor
+                        })
                     
-        except Exception as e:
-            st.error(f"❌ Analysis failed: {str(e)}")
-            st.error("Please check your stock symbols and try again.")
+                    enhanced_df = pd.DataFrame(enhanced_rec_data)
+                    csv_data = enhanced_df.to_csv(index=False)
+                    
+                    st.download_button(
+                        label="📊 Download Detailed CSV Report",
+                        data=csv_data,
+                        file_name=f"detailed_stock_analysis_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        help="Download comprehensive analysis in CSV format"
+                    )
+                
+                with col2:
+                    # Comprehensive JSON export
+                    comprehensive_export = {
+                        'metadata': {
+                            'analysis_date': datetime.datetime.now().isoformat(),
+                            'investment_amount': investment_amount,
+                            'risk_factor': risk_factor,
+                            'ml_model': ml_model,
+                            'stocks_analyzed': list(recommendations.keys()),
+                            'total_stocks': len(recommendations),
+                            'selected_stocks_info': st.session_state.selected_stocks
+                        },
+                        'model_performance': metrics,
+                        'recommendations': recommendations,
+                        'portfolio_metrics': {
+                            'avg_confidence': float(np.mean([r['confidence'] for r in recommendations.values()])),
+                            'avg_volatility': float(np.mean([r['volatility'] for r in recommendations.values()])),
+                            'buy_signals': len([r for r in recommendations.values() if r['recommendation'] in ['Buy', 'Strong Buy']]),
+                            'hold_signals': len([r for r in recommendations.values() if r['recommendation'] == 'Hold'])
+                        },
+                        'ai_analysis': ai_analysis
+                    }
+                    
+                    json_data = json.dumps(comprehensive_export, indent=2, default=str)
+                    
+                    st.download_button(
+                        label="📄 Download Complete JSON Report",
+                        data=json_data,
+                        file_name=f"complete_stock_analysis_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                        mime="application/json",
+                        help="Download complete analysis with all data in JSON format"
+                    )
+                        
+            except Exception as e:
+                st.error(f"❌ Analysis failed: {str(e)}")
+                st.error("Please check your stock selections and try again.")
+    
+    
     
     # Footer
     st.markdown("---")
